@@ -90,28 +90,38 @@ contract Executor is IExecutor {
     receive() external payable {}
 
     fallback(bytes calldata) external payable returns (bytes memory returnData) {
-        bytes32 context = _tload(FALLBACK_CONTEXT_TLOC);
-        require(msg.sender == address(uint160(uint256(context))));
+    bytes32 context = _tload(FALLBACK_CONTEXT_TLOC);
+    require(msg.sender == address(uint160(uint256(context))));
+    uint256 mask = 0xffffffff
 
-        uint256 dataIndex = uint256(context >> 160);
+    // Apply masks to extract only the intended 32 bits for each value
+    uint256 dataIndex = uint256((context >> 160) & mask);
+    uint256 variableIndex = uint256((context >> 192) & mask);
+    uint256 positionOverwrite = uint256((context >> 224) & mask);
 
-        bytes memory fallbackData;
-        assembly ("memory-safe") {
-            let offset := add(4, calldataload(add(4, mul(32, dataIndex))))
-            let length := calldataload(offset)
+    bytes memory fallbackData;
+    assembly ("memory-safe") {
+        let offset := add(4, calldataload(add(4, mul(32, dataIndex))))
+        let length := calldataload(offset)
 
-            fallbackData := mload(0x40)
+        fallbackData := mload(0x40)
 
-            calldatacopy(fallbackData, offset, add(32, length))
+        calldatacopy(fallbackData, offset, add(32, length))
 
-            mstore(0x40, add(fallbackData, add(32, length)))
+        // If variableIndex is non-zero, overwrite the specified position
+        if gt(variableIndex, 0) {
+            let variableData := calldataload(add(4, mul(32, sub(variableIndex, 1))))
+            mstore(add(fallbackData, add(32, positionOverwrite)), variableData)
         }
 
-        bytes[] memory multicallData;
-        (multicallData, returnData) = abi.decode(fallbackData, (bytes[], bytes));
-
-        _multicall(multicallData);
+        mstore(0x40, add(fallbackData, add(32, length)))
     }
+
+    bytes[] memory multicallData;
+    (multicallData, returnData) = abi.decode(fallbackData, (bytes[], bytes));
+
+    _multicall(multicallData);
+}
 
     /* INTERNAL */
 
